@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+:root {
+  --cream: #F0EBE3;
+  --cream-dark: #E5DED3;
+  --forest: #2D5A3D;
+  --forest-dark: #234A31;
+  --forest-light: #E0EADF;
+  --bark: #201C17;
+  --bark-soft: #6D6459;
+  --sage: #9DBFA7;
+  --warm-white: #FAF8F5;
+}
+
+@theme inline {
+  --color-cream: var(--cream);
+  --color-cream-dark: var(--cream-dark);
+  --color-forest: var(--forest);
+  --color-forest-dark: var(--forest-dark);
+  --color-forest-light: var(--forest-light);
+  --color-bark: var(--bark);
+  --color-bark-soft: var(--bark-soft);
+  --color-sage: var(--sage);
+  --color-warm-white: var(--warm-white);
+}
+
+body {
+  background: var(--cream);
+  color: var(--bark);
+}
