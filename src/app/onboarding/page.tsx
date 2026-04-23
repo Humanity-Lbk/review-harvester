@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 
 const CRM_OPTIONS = [
   { value: "", label: "Select your software" },
@@ -49,8 +50,16 @@ const VOLUME_OPTIONS = [
 type Step = 1 | 2;
 
 export default function OnboardingPage() {
+  const searchParams = useSearchParams();
   const [step, setStep] = useState<Step>(1);
   const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
+  const [contactName, setContactName] = useState("");
+  const [businessName, setBusinessName] = useState("");
+
+  useEffect(() => {
+    setContactName(searchParams.get("name") || "");
+    setBusinessName(searchParams.get("biz") || "");
+  }, [searchParams]);
 
   const [formData, setFormData] = useState({
     crm: "",
@@ -96,7 +105,7 @@ export default function OnboardingPage() {
       const res = await fetch("/api/onboarding", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({ ...formData, contactName, businessName }),
       });
       if (!res.ok) throw new Error("Submit failed");
       setStatus("success");
