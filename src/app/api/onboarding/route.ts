@@ -1,5 +1,29 @@
 import { NextResponse } from "next/server";
 
+const GHL_API_BASE = "https://services.leadconnectorhq.com";
+
+async function ghlFetch(path: string, options: RequestInit = {}) {
+  const apiKey = process.env.GHL_API_KEY;
+  if (!apiKey) return null;
+
+  const res = await fetch(`${GHL_API_BASE}${path}`, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      Version: "2021-07-28",
+      ...options.headers,
+    },
+  });
+
+  if (!res.ok) {
+    console.error(`GHL API error: ${res.status} ${res.statusText} for ${path}`);
+    return null;
+  }
+
+  return res.json();
+}
+
 export async function POST(request: Request) {
   const data = await request.json();
 
@@ -16,7 +40,7 @@ export async function POST(request: Request) {
       ? `Other: ${data.triggerOther}`
       : data.trigger?.replace(/_/g, " ") || "Not provided";
 
-  // Build the full summary for both Telegram and GHL note
+  // Build the full summary
   const summaryLines = [
     `CRM/Software: ${crmDisplay}`,
     `Completion Trigger: ${triggerDisplay}`,
@@ -30,7 +54,9 @@ export async function POST(request: Request) {
     data.biggestChallenge ? `Biggest Challenge: ${data.biggestChallenge}` : null,
   ].filter(Boolean);
 
-  // Send to Telegram
+  const noteBody = `ONBOARDING QUIZ COMPLETED — ${businessName}\n\n${summaryLines.join("\n")}`;
+
+  // 1. Send to Telegram
   const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
   const telegramChatId = process.env.TELEGRAM_CHAT_ID || "7646827279";
 
@@ -75,38 +101,63 @@ export async function POST(request: Request) {
     }
   }
 
-  // Send to GHL webhook — tags + custom fields
-  const ghlWebhookUrl = process.env.GHL_WEBHOOK_URL;
-  if (ghlWebhookUrl) {
-    try {
-      await fetch(ghlWebhookUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          firstName: contactName.split(" ")[0] || contactName,
-          lastName: contactName.split(" ").slice(1).join(" ") || "",
-          companyName: businessName,
-          tags: ["Onboarding Complete"],
-          source: "Review Accelerator Onboarding",
-          // Pass the full quiz summary as a note field
-          onboardingNote: `ONBOARDING QUIZ — ${businessName}\n${summaryLines.join("\n")}`,
-          customFields: [
-            { key: "crm_software", value: crmDisplay },
-            { key: "completion_trigger", value: triggerDisplay },
-            { key: "customer_volume", value: data.customerVolume },
-            { key: "has_automation_tools", value: data.hasZapier },
-            { key: "contact_preference", value: data.contactMethod },
-            { key: "current_review_count", value: data.currentReviewCount },
-            { key: "current_rating", value: data.currentRating },
-            { key: "already_asking_reviews", value: data.alreadyAsking },
-            { key: "current_review_process", value: data.currentProcess },
-            { key: "biggest_review_challenge", value: data.biggestChallenge },
-          ],
-        }),
-      });
-    } catch (err) {
-      console.error("GHL webhook failed:", err);
+  // 2. Find contact in GHL by company name
+  const locationId = "3InRCEDtojc1F8qlDEgE";
+  let contactId: string | null = null;
+
+  const searchResult = await ghlFetch(
+    `/contacts/?locationId=${locationId}&query=${encodeURIComponent(businessName)}&limit=5`
+  );
+
+  if (searchResult?.contacts?.length > 0) {
+    contactId = searchResult.contacts[0].id;
+  }
+
+  // Fallback: try searching by contact name if business name didn't match
+  if (!contactId && contactName !== "Unknown") {
+    const nameSearch = await ghlFetch(
+      `/contacts/?locationId=${locationId}&query=${encodeURIComponent(contactName)}&limit=5`
+    );
+    if (nameSearch?.contacts?.length > 0) {
+      contactId = nameSearch.contacts[0].id;
     }
+  }
+
+  if (contactId) {
+    // 3. Add "Onboarding Complete" tag
+    await ghlFetch(`/contacts/${contactId}/tags`, {
+      method: "POST",
+      body: JSON.stringify({
+        tags: ["Onboarding Complete"],
+      }),
+    });
+
+    // 4. Add note with quiz data
+    await ghlFetch(`/contacts/${contactId}/notes`, {
+      method: "POST",
+      body: JSON.stringify({
+        body: noteBody,
+      }),
+    });
+
+    // 5. Update contact with quiz data in custom fields (optional, best-effort)
+    await ghlFetch(`/contacts/${contactId}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        customFields: [
+          { key: "crm_software", value: crmDisplay },
+          { key: "completion_trigger", value: triggerDisplay },
+          { key: "customer_volume", value: data.customerVolume },
+          { key: "contact_preference", value: data.contactMethod },
+          { key: "current_review_count", value: data.currentReviewCount },
+          { key: "current_rating", value: data.currentRating },
+        ],
+      }),
+    });
+
+    console.log(`GHL updated: contact ${contactId} tagged + note added for ${businessName}`);
+  } else {
+    console.error(`GHL: Could not find contact for "${businessName}" / "${contactName}"`);
   }
 
   return NextResponse.json({ ok: true });
